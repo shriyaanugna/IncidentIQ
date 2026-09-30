@@ -12,7 +12,7 @@ services:
       - key: DATABASE_URL
         value: "sqlite:///../data/incidentiq.db"
       - key: GROQ_MODEL
-        value: "openai/gpt-oss-20b"
+        value: "llama-3.1-8b-instant"
       - key: GROQ_API_KEY
         sync: false
       - key: HINDSIGHT_API_URL
