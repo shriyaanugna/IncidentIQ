@@ -140,7 +140,7 @@ def test_groq_model_loaded_from_settings():
     from app.config import settings
     service = AIIncidentService(api_key="gsk_test")
     assert service.model == settings.GROQ_MODEL
-    assert service.model == "openai/gpt-oss-20b"
+    assert service.model == "llama-3.1-8b-instant"
 
 
 def test_groq_custom_model_override():

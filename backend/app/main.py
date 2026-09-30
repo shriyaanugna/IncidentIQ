@@ -1,12 +1,16 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+import logging
 
 from app.config import settings
 from app.database import get_db, check_database_health, engine, Base, SessionLocal
 from app.seed import seed_incidents
 from app.routers import incidents
+
+logger = logging.getLogger("incidentiq.main")
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -32,6 +36,22 @@ app.add_middleware(
     expose_headers=["*"],
     max_age=600,
 )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.exception(f"Unhandled exception during request {request.method} {request.url}: {exc}")
+    origin = request.headers.get("origin")
+    headers = {}
+    if origin and (origin in settings.CORS_ORIGINS or ".onrender.com" in origin):
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+        headers["Vary"] = "Origin"
+
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": f"Internal server error: {str(exc)}"},
+        headers=headers,
+    )
 
 app.include_router(incidents.router)
 app.include_router(incidents.legacy_router)

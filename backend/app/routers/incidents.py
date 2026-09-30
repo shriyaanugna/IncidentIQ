@@ -45,15 +45,15 @@ def parse_memory_item(item: Any, target_incident: Optional[Incident] = None) -> 
     if isinstance(metadata, str):
         metadata = {}
 
-    incident_id = d.get("incident_id") or d.get("document_id") or metadata.get("incident_id") or ""
-    service = d.get("service") or metadata.get("service") or ""
-    error = d.get("error") or ""
-    symptoms = d.get("symptoms") or ""
-    root_cause = d.get("root_cause") or ""
-    resolution = d.get("resolution") or ""
-    post_mortem = d.get("post_mortem") or ""
-    outcome = d.get("outcome") or metadata.get("outcome") or "Resolved"
-    date_str = d.get("created_at") or d.get("date") or ""
+    incident_id = str(d.get("incident_id") or d.get("document_id") or (metadata.get("incident_id") if isinstance(metadata, dict) else "") or "")
+    service = str(d.get("service") or (metadata.get("service") if isinstance(metadata, dict) else "") or "")
+    error = str(d.get("error") or "")
+    symptoms = str(d.get("symptoms") or "")
+    root_cause = str(d.get("root_cause") or "")
+    resolution = str(d.get("resolution") or "")
+    post_mortem = str(d.get("post_mortem") or "")
+    outcome = str(d.get("outcome") or (metadata.get("outcome") if isinstance(metadata, dict) else "") or "Resolved")
+    date_str = str(d.get("created_at") or d.get("date") or "")
 
     lines = text_content.split("\n")
     for line in lines:
@@ -81,17 +81,21 @@ def parse_memory_item(item: Any, target_incident: Optional[Incident] = None) -> 
     differences_noted = []
 
     if target_incident:
+        target_service = (target_incident.service or "").lower()
+        target_error = (target_incident.error or "").lower()
+        target_symptoms = (target_incident.symptoms or "").lower()
+
         # Check service similarity
-        if service and service.lower() == target_incident.service.lower():
+        if service and service.lower() == target_service:
             relevance_score += 40
             relevance_reasons.append(f"Same service ({service})")
-        elif service:
+        elif service and target_service:
             differences_noted.append(f"Different service ({service} vs {target_incident.service})")
 
         # Check error signature similarity
-        if error and target_incident.error:
+        if error and target_error:
             err_a = error.lower()
-            err_b = target_incident.error.lower()
+            err_b = target_error
             if err_a == err_b:
                 relevance_score += 40
                 relevance_reasons.append("Identical error signature")
@@ -109,9 +113,9 @@ def parse_memory_item(item: Any, target_incident: Optional[Incident] = None) -> 
             relevance_reasons.append("Verified root cause & resolution")
 
         # Check symptom overlap
-        if symptoms and target_incident.symptoms:
+        if symptoms and target_symptoms:
             shared_words = set(re.findall(r'\b\w{4,}\b', symptoms.lower())).intersection(
-                set(re.findall(r'\b\w{4,}\b', target_incident.symptoms.lower()))
+                set(re.findall(r'\b\w{4,}\b', target_symptoms))
             )
             stop_words = {"high", "http", "error", "errors", "failed", "failing", "service", "with", "from", "during", "requests", "request"}
             sig_words = [w for w in shared_words if w not in stop_words]
@@ -164,16 +168,16 @@ async def perform_investigation_workflow(incident: Incident, db: Session) -> Inc
             items = getattr(raw_res, "results") or []
 
         parsed_items = []
-        target_id_upper = incident.id.upper()
+        target_id_upper = (incident.id or "").upper()
 
         for item in items:
             parsed = parse_memory_item(item, target_incident=incident)
 
             # STRICT SELF-MATCH EXCLUSION: Check incident_id, text content, and metadata for target incident ID
-            m_id = parsed["incident_id"].upper() if parsed["incident_id"] else ""
-            raw_text = parsed["raw_text"].upper()
+            m_id = parsed["incident_id"].upper() if parsed.get("incident_id") else ""
+            raw_text = (parsed.get("raw_text") or "").upper()
 
-            if m_id == target_id_upper or f"INCIDENT ID: {target_id_upper}" in raw_text or f"INCIDENT ID: {target_id_upper}\n" in raw_text:
+            if target_id_upper and (m_id == target_id_upper or f"INCIDENT ID: {target_id_upper}" in raw_text or f"INCIDENT ID: {target_id_upper}\n" in raw_text):
                 continue
 
             parsed_items.append(parsed)
@@ -182,14 +186,23 @@ async def perform_investigation_workflow(incident: Incident, db: Session) -> Inc
         seen_keys = set()
         deduped_items = []
         for p in parsed_items:
-            # Stable key combines incident_id or service/error with root cause
-            key = (p["incident_id"].upper(), p["root_cause"].strip(), p["resolution"].strip()) if p["incident_id"] else (p["service"].lower(), p["error"].lower(), p["root_cause"].strip())
+            p_inc_id = (p.get("incident_id") or "").upper()
+            p_rc = (p.get("root_cause") or "").strip()
+            p_res = (p.get("resolution") or "").strip()
+            p_svc = (p.get("service") or "").lower()
+            p_err = (p.get("error") or "").lower()
+
+            key = (p_inc_id, p_rc, p_res) if p_inc_id else (p_svc, p_err, p_rc)
             if key not in seen_keys:
                 seen_keys.add(key)
                 deduped_items.append(p)
 
         # Filter out memories with negligible relevance score (< 15) unless service matches
-        meaningful_items = [p for p in deduped_items if p["relevance_score"] >= 15 or (p["service"] and p["service"].lower() == incident.service.lower())]
+        target_svc_lower = (incident.service or "").lower()
+        meaningful_items = [
+            p for p in deduped_items
+            if p["relevance_score"] >= 15 or (p.get("service") and p["service"].lower() == target_svc_lower)
+        ]
 
         # Rank memories by relevance score descending
         ranked_items = sorted(meaningful_items, key=lambda x: x["relevance_score"], reverse=True)

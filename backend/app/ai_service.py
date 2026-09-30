@@ -91,12 +91,23 @@ class AIIncidentService:
 
             if len(items) > 0:
                 memory_status = "ok"
-                memories_text = json.dumps(items, indent=2)
+                serializable_items = []
+                for it in items:
+                    if hasattr(it, "model_dump"):
+                        serializable_items.append(it.model_dump())
+                    elif isinstance(it, dict):
+                        serializable_items.append(it)
+                    elif hasattr(it, "__dict__"):
+                        serializable_items.append(it.__dict__)
+                    else:
+                        serializable_items.append(str(it))
+                memories_text = json.dumps(serializable_items, indent=2, default=str)
             else:
                 memory_status = "empty"
                 memories_text = "Hindsight search succeeded, but no unique relevant historical memories were found."
 
-        user_prompt = f"""--- CURRENT INCIDENT DETAILS ---
+        try:
+            user_prompt = f"""--- CURRENT INCIDENT DETAILS ---
 Service: {service}
 Error: {error}
 Symptoms: {symptoms}
@@ -108,7 +119,6 @@ Severity: {severity}
 Analyze the current incident now and respond strictly with the JSON schema requested.
 """
 
-        try:
             client = self.client
             completion = client.chat.completions.create(
                 model=self.model,
